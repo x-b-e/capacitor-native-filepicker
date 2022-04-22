@@ -8,6 +8,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
+import android.util.Base64;
 
 import androidx.activity.result.ActivityResult;
 import androidx.core.content.FileProvider;
@@ -102,6 +103,15 @@ public class CapacitorNativeFilePickerPlugin extends Plugin {
         }
     }
 
+    @PluginMethod
+    public void launchFolderPickerToWriteFile(PluginCall call){
+        if (getPermissionState("storage") != PermissionState.GRANTED) {
+            requestPermissionForAlias("storage", call, "pickerPermsCallback");
+        } else {
+            launchPickerFolderToWriteFile(call);
+        }
+    }
+
     /**
      * This method launches the native document picker and allows the user to select a single
      * or multiple files.
@@ -121,6 +131,18 @@ public class CapacitorNativeFilePickerPlugin extends Plugin {
         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
 
         startActivityForResult(call, intent, "pickFilesResult");
+    }
+
+    @PluginMethod
+    public void launchPickerFolderToWriteFile(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false);
+
+        startActivityForResult(call, intent, "pickFoldersResultAndWriteFile");
     }
 
     @PluginMethod
@@ -187,6 +209,63 @@ public class CapacitorNativeFilePickerPlugin extends Plugin {
     }
 
     @ActivityCallback
+    private void pickFoldersResultAndWriteFile(PluginCall call, ActivityResult result) {
+        JSObject ret = new JSObject();
+
+        if (result.getResultCode() == Activity.RESULT_CANCELED) {
+            call.reject("Activity canceled");
+        } else {
+            Intent data = result.getData();
+            Uri directory = data.getData();
+            getContext().getContentResolver().takePersistableUriPermission(directory, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+
+            String docId = DocumentsContract.getTreeDocumentId(directory);
+
+            Uri dirUri = DocumentsContract.buildDocumentUriUsingTree(directory, docId);
+
+            Uri outputUri = null;
+
+            OutputStream os = null;
+
+            try
+            {
+                outputUri = DocumentsContract.createDocument(
+                    getContext().getContentResolver(),
+                    dirUri,
+                    "*/*",
+                    call.getString("filename")
+                );
+
+                os = getContext().getContentResolver().openOutputStream(outputUri, "w");
+
+                String contentStr = call.getString("content");
+
+                //remove header from dataURL
+                if (contentStr.contains(",")) {
+                  contentStr = contentStr.split(",")[1];
+                }
+
+                os.write(Base64.decode(contentStr, Base64.NO_WRAP));
+
+                os.close();
+
+                JSObject response = new JSObject();
+
+                response.put("filepath", outputUri.toString());
+
+                call.resolve(response);
+            } catch (FileNotFoundException e )
+            {
+                e.printStackTrace();
+            } catch (IOException e){
+                call.reject(e.getMessage());
+            } catch (Exception e){
+                call.reject(e.getMessage());
+            }
+        }
+    }
+
+    @ActivityCallback
     private void pickFoldersResult(PluginCall call, ActivityResult result) {
         JSObject ret = new JSObject();
 
@@ -195,7 +274,7 @@ public class CapacitorNativeFilePickerPlugin extends Plugin {
         } else {
             Intent data = result.getData();
             Uri directory = data.getData();
-
+            
             JSArray folders = new JSArray();
             folders.put(directory.toString());
 

@@ -1,6 +1,6 @@
 import { WebPlugin } from '@capacitor/core';
 
-import type { CapacitorNativeFilePickerPlugin, FilePickerOptions, CreateFileOptions, WriteToFileOptions } from './definitions';
+import type { CapacitorNativeFilePickerPlugin, FilePickerOptions, CreateFileOptions, WriteToFileOptions, FolderPickerToWriteFileOptions } from './definitions';
 
 export class CapacitorNativeFilePickerWeb extends WebPlugin implements CapacitorNativeFilePickerPlugin 
 {
@@ -16,6 +16,14 @@ export class CapacitorNativeFilePickerWeb extends WebPlugin implements Capacitor
             folders: ["/example-directory1", "/example-directory2"]
         };
     }
+
+    async launchFolderPickerToWriteFile(options: FolderPickerToWriteFileOptions): Promise<{ filepath: string }> {
+      console.log(`FOLDER PICKER TO WRITE FILE`, options);
+
+      return {
+        filepath: "./example-written-file.txt"
+      }
+  }
     
     async launchFilePicker(options: FilePickerOptions): Promise<{ files: Array<string> }> {
         console.log('LAUNCH FILE PICKER', options);

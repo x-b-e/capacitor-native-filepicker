@@ -6,6 +6,7 @@ import android.content.ClipData;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
+import android.content.UriPermission;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
 import android.util.Base64;
@@ -31,6 +32,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.util.List;
 
 @CapacitorPlugin(
     name = "CapacitorNativeFilePicker",
@@ -106,7 +108,7 @@ public class CapacitorNativeFilePickerPlugin extends Plugin {
     @PluginMethod
     public void launchFolderPickerToWriteFile(PluginCall call){
         if (getPermissionState("storage") != PermissionState.GRANTED) {
-            requestPermissionForAlias("storage", call, "pickerPermsCallback");
+            requestPermissionForAlias("storage", call, "folderPickerPermsCallback");
         } else {
             launchPickerFolderToWriteFile(call);
         }
@@ -135,14 +137,21 @@ public class CapacitorNativeFilePickerPlugin extends Plugin {
 
     @PluginMethod
     public void launchPickerFolderToWriteFile(PluginCall call) {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-        intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        List<UriPermission> persistedURis = getContext().getContentResolver().getPersistedUriPermissions();
+        Uri persistedURI = null;
+        if (persistedURis.size() > 0) {
+          persistedURI = persistedURis.get(0).getUri();
+          this.writeFileToDirectory(call, persistedURI);
+        } else {
+          Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+          intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+          intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
 
-        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false);
+          intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false);
 
-        startActivityForResult(call, intent, "pickFoldersResultAndWriteFile");
+          startActivityForResult(call, intent, "pickFoldersResultAndWriteFile");
+        }
     }
 
     @PluginMethod
@@ -165,6 +174,15 @@ public class CapacitorNativeFilePickerPlugin extends Plugin {
             call.reject("Permission is required to take a picture");
         }
     }
+
+  @PermissionCallback
+  private void folderPickerPermsCallback(PluginCall call) {
+    if (getPermissionState("storage") == PermissionState.GRANTED) {
+      launchPickerFolderToWriteFile(call);
+    } else {
+      call.reject("Permission is required to take a picture");
+    }
+  }
 
     @ActivityCallback
     private void pickFilesResult(PluginCall call, ActivityResult result) {
@@ -208,6 +226,52 @@ public class CapacitorNativeFilePickerPlugin extends Plugin {
         }
     }
 
+    private void writeFileToDirectory(PluginCall call, Uri directory) {
+      String docId = DocumentsContract.getTreeDocumentId(directory);
+
+      Uri dirUri = DocumentsContract.buildDocumentUriUsingTree(directory, docId);
+
+      Uri outputUri = null;
+
+      OutputStream os = null;
+
+      try
+      {
+        outputUri = DocumentsContract.createDocument(
+          getContext().getContentResolver(),
+          dirUri,
+          "*/*",
+          call.getString("filename")
+        );
+
+        os = getContext().getContentResolver().openOutputStream(outputUri, "w");
+
+        String contentStr = call.getString("content");
+
+        //remove header from dataURL
+        if (contentStr.contains(",")) {
+          contentStr = contentStr.split(",")[1];
+        }
+
+        os.write(Base64.decode(contentStr, Base64.NO_WRAP));
+
+        os.close();
+
+        JSObject response = new JSObject();
+
+        response.put("filepath", outputUri.toString());
+
+        call.resolve(response);
+      } catch (FileNotFoundException e )
+      {
+        e.printStackTrace();
+      } catch (IOException e){
+        call.reject(e.getMessage());
+      } catch (Exception e){
+        call.reject(e.getMessage());
+      }
+    }
+
     @ActivityCallback
     private void pickFoldersResultAndWriteFile(PluginCall call, ActivityResult result) {
         JSObject ret = new JSObject();
@@ -219,49 +283,7 @@ public class CapacitorNativeFilePickerPlugin extends Plugin {
             Uri directory = data.getData();
             getContext().getContentResolver().takePersistableUriPermission(directory, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
 
-            String docId = DocumentsContract.getTreeDocumentId(directory);
-
-            Uri dirUri = DocumentsContract.buildDocumentUriUsingTree(directory, docId);
-
-            Uri outputUri = null;
-
-            OutputStream os = null;
-
-            try
-            {
-                outputUri = DocumentsContract.createDocument(
-                    getContext().getContentResolver(),
-                    dirUri,
-                    "*/*",
-                    call.getString("filename")
-                );
-
-                os = getContext().getContentResolver().openOutputStream(outputUri, "w");
-
-                String contentStr = call.getString("content");
-
-                //remove header from dataURL
-                if (contentStr.contains(",")) {
-                  contentStr = contentStr.split(",")[1];
-                }
-
-                os.write(Base64.decode(contentStr, Base64.NO_WRAP));
-
-                os.close();
-
-                JSObject response = new JSObject();
-
-                response.put("filepath", outputUri.toString());
-
-                call.resolve(response);
-            } catch (FileNotFoundException e )
-            {
-                e.printStackTrace();
-            } catch (IOException e){
-                call.reject(e.getMessage());
-            } catch (Exception e){
-                call.reject(e.getMessage());
-            }
+            this.writeFileToDirectory(call, directory);
         }
     }
 
@@ -274,7 +296,7 @@ public class CapacitorNativeFilePickerPlugin extends Plugin {
         } else {
             Intent data = result.getData();
             Uri directory = data.getData();
-            
+
             JSArray folders = new JSArray();
             folders.put(directory.toString());
 
